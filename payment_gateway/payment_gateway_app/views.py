@@ -24,7 +24,6 @@ stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
 
 class checkoutSession(APIView): # view for checkout session
     def post(self, request, *args,**kwargs):
-        print(self.kwargs)
         product_id = self.kwargs['pk']
         count = self.kwargs['count']
         try:
