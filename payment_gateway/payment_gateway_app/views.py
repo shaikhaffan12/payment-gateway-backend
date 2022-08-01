@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 # Create your views here.
 
-class ProductView(RetrieveAPIView):
+class ProductView(RetrieveAPIView): # view for product
     queryset = product.objects.all()
     serializer_class = productSerializer
 
@@ -21,9 +21,9 @@ class ProductView(RetrieveAPIView):
         return Response(serializer.data)
         
 stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
-class checkoutSession(APIView):
+
+class checkoutSession(APIView): # view for checkout session
     def post(self, request, *args,**kwargs):
-        print(self.kwargs)
         product_id = self.kwargs['pk']
         count = self.kwargs['count']
         try:
@@ -53,7 +53,7 @@ class checkoutSession(APIView):
         except Exception as  e:
             return Response({'msg':'something went wrong while creating stripe session', 'error': str(e)}, status=500)
 
-def stripe_webhook(session):
+def stripe_webhook(session): # function to point the data from session and create instance in database
     customer_name = session["charges"]["data"][0]["billing_details"]["name"]
     customer_email = session["charges"]["data"][0]["billing_details"]["email"]
     order_total = session["charges"]["data"][0]["amount"]
@@ -63,11 +63,12 @@ def stripe_webhook(session):
     payment_status = session["charges"]["data"][0]["status"]
 
     str_amt = str(order_total)
-    paid_amount = str_amt[:-2]
+    paid_amount = str_amt[:-2] # slice amount because amount we get from stripe api does not include "." in amount
+    # create instance of data object
     payment_detail.objects.create(name=customer_name, email=customer_email, amount=paid_amount, city= user_city, state = user_state, country = user_country, status = payment_status)
     
 
-class stripe_webhook_view(CreateAPIView):
+class stripe_webhook_view(CreateAPIView): # view for stripe webhook
     def post (self,request):
         payload = request.body
 
@@ -76,7 +77,7 @@ class stripe_webhook_view(CreateAPIView):
 
         try:
             event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.ENDPOINT_SECRET_KEY
+            payload, sig_header, os.environ.get('ENDPOINT_SECRET_KEY') # get secret key for endpoint from env
             )
         except ValueError as e:
             # Invalid payload
