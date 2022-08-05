@@ -36,6 +36,7 @@ class checkoutSession(APIView): # view for checkout session
                             'unit_amount' : products.price * 100,
                             'product_data': {
                                 'name' : products.name,
+                                'images':['https://rukminim1.flixcart.com/image/416/416/kwdv3bk0/headphone/y/0/k/-original-imag92pgh4eg3cnk.jpeg?q=70'],
                             }
                         },
                         'quantity': count
