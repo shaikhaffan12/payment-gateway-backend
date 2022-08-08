@@ -1,16 +1,18 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import redirect
 from rest_framework.views import APIView
 from rest_framework.generics import RetrieveAPIView, CreateAPIView
-from .serializer import productSerializer
-from .models import product, payment_detail
+from .serializer import productSerializer, PaymentDetailSerializer
+from .models import product
 from rest_framework.response import Response
 import stripe
-from django.conf import settings
 import os
-from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 # Create your views here.
 
+# Stripe Secret Key
+stripe.api_key = os.environ.get('STRIPE_SECRET_KEY') 
+
+Site_url = os.environ.get('SITE_URL')
 class ProductView(RetrieveAPIView): # view for product
     queryset = product.objects.all()
     serializer_class = productSerializer
@@ -20,7 +22,7 @@ class ProductView(RetrieveAPIView): # view for product
         serializer = self.get_serializer(products)
         return Response(serializer.data)
         
-stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
+
 
 class checkoutSession(APIView): # view for checkout session
     def post(self, request, *args,**kwargs):
@@ -36,7 +38,7 @@ class checkoutSession(APIView): # view for checkout session
                             'unit_amount' : products.price * 100,
                             'product_data': {
                                 'name' : products.name,
-                                'images':['https://rukminim1.flixcart.com/image/416/416/kwdv3bk0/headphone/y/0/k/-original-imag92pgh4eg3cnk.jpeg?q=70'],
+                                'images':[products.image_url],
                             }
                         },
                         'quantity': count
@@ -46,39 +48,41 @@ class checkoutSession(APIView): # view for checkout session
                 metadata = {
                     'product_id' : products.id,
                 },
-                success_url = settings.SITE_URL + '?success=true',
-                cancel_url = settings.SITE_URL + '?cancel=true',
+                success_url = Site_url + '?success=true',
+                cancel_url = Site_url + '?cancel=true',
             )
             return redirect(checkout_session.url, code=303)
 
         except Exception as  e:
             return Response({'msg':'something went wrong while creating stripe session', 'error': str(e)}, status=500)
 
-def stripe_webhook(session): # function to point the data from session and create instance in database
-    customer_name = session["charges"]["data"][0]["billing_details"]["name"]
-    customer_email = session["charges"]["data"][0]["billing_details"]["email"]
-    order_total = session["charges"]["data"][0]["amount"]
-    user_city = session["charges"]["data"][0]["billing_details"]["address"]["city"]
-    user_state = session["charges"]["data"][0]["billing_details"]["address"]["state"]
-    user_country = session["charges"]["data"][0]["billing_details"]["address"]["country"]
-    payment_status = session["charges"]["data"][0]["status"]
 
-    str_amt = str(order_total)
-    paid_amount = str_amt[:-2] # slice amount because amount we get from stripe api does not include "." in amount
-    # create instance of data object
-    payment_detail.objects.create(name=customer_name, email=customer_email, amount=paid_amount, city= user_city, state = user_state, country = user_country, status = payment_status)
-    
+# Stripe webhook view 
+class stripe_webhook_view(CreateAPIView):
+    serializer_class = PaymentDetailSerializer
 
-class stripe_webhook_view(CreateAPIView): # view for stripe webhook
+    def stripe_webhook(self,session):
+        # trace and store data which stripe webhook forward to this end point
+        # traced data store in DB 
+        slice_data = session["charges"]["data"][0]
+        data = {
+            "name" : slice_data["billing_details"]["name"],
+            "email" : slice_data["billing_details"]["email"],
+            "amount" : (slice_data["amount"])/100,
+            "city" : slice_data["billing_details"]["address"]["city"],
+            "state" : slice_data["billing_details"]["address"]["state"],
+            "country" : slice_data["billing_details"]["address"]["country"],
+            "status" : slice_data["status"]
+        }
+        return data
+
     def post (self,request):
         payload = request.body
-
         sig_header = request.META['HTTP_STRIPE_SIGNATURE']
         event = None
-
         try:
             event = stripe.Webhook.construct_event(
-            payload, sig_header, os.environ.get('ENDPOINT_SECRET_KEY') # get secret key for endpoint from env
+            payload, sig_header, os.environ.get('ENDPOINT_SECRET_KEY')
             )
         except ValueError as e:
             # Invalid payload
@@ -86,12 +90,14 @@ class stripe_webhook_view(CreateAPIView): # view for stripe webhook
         except stripe.error.SignatureVerificationError as e:
             # Invalid signature
             return HttpResponse(status=400)
-        if event['type'] == 'payment_intent.succeeded':
-            session = event['data']['object']
-        # For now, you only need to print out the webhook payload so you can see
-        # the structure.
-            stripe_webhook(session)
 
+        #  it saves failed and succeeded data in DB
+        if event['type'] in ['payment_intent.succeeded','payment_intent.payment_failed']:
+            session = event['data']['object']
+            data = self.stripe_webhook(session)
+            serializer = self.get_serializer(data=data)
+            if serializer.is_valid(raise_exception=True):
+                serializer.save()
         return HttpResponse(status=200)
 
         
